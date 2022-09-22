@@ -19,11 +19,11 @@
  */
 (function() {
 	'use strict';
-	 
+
 	var maxRequest = 200;
 	var editorHasFocus = false;
 	var spell_delay = 250;
-	var spell_fast_after_spacebar = true
+	var spell_fast_after_spacebar = true;
 	var settings;
 	var settings_path;
 	var state = false;
@@ -33,29 +33,45 @@
 			learn: "Add To Personal Dictionary",
 			nosuggestions: "( No Spelling Suggestions )",
 		}
+	var sendTimeOut = 0;
+	var spellcache = [];
+	var suggestionscache = [];
+	var ignorecache = [];
 		/* #0 plugin init layer */
 	CKEDITOR.plugins.add('nanospell', {
 		icons: 'nanospell',
 		init: function(editor) {
 			/* #1 menu layer */
 
-		//== 
+		//==
 			var afterInit= function(editor) {
-		
-
-
 
 			var wiggles_filter = {
-				elements: {
-					span: function(el) {
 
+                root:function(r){
+
+                    var funky = document.createElement('div');
+                    funky.innerHTML = r.getHtml();
+                    var bogus = funky.querySelectorAll('span[data-cke-bogus]');
+
+                   for(var i =0; i<bogus.length;i++){
+                       var bogusnode =bogus[i];
+                       unwrapbogus(bogusnode);
+                   }
+                    r.setHtml(funky.innerHTML);
+                }
+
+                /*,
+                elements: {
+
+					span: function(el) {
 						var isNano = !!el.attributes && (el.attributes['class'] == "nanospell-typo" || el.attributes['class'] == "nanospell-typo-disabled")
 						if (isNano) {
-							return el.children[0]
+							return el.children[0];
 						}
 					}
-				}
-			}
+				}*/
+			};
 			var dataProcessor = editor.dataProcessor,
 				htmlFilter = dataProcessor && dataProcessor.htmlFilter;
 			if (htmlFilter) {
@@ -63,13 +79,13 @@
 			}
 
 			clearInterval(editor.wiggles_filter_handle);
-		}
+		};
 
 			editor.wiggles_filter_handle =  setInterval(function(){if(editor.instanceReady){afterInit(editor)}},33);
 
-		  
-		  
-//function(){this.instanceReadyHelper(editor, this);
+
+
+            //function(){this.instanceReadyHelper(editor, this);
 
 			settings_path = this.path;
 			if (editor && !editor.config.nanospell) {
@@ -77,12 +93,12 @@
 			}
 			editor.getWin = function() {
 				return editor.window.$
-			}			
-			editor.getElement = function() {
-				return editor.element.$;
 			}
 			editor.getDoc = function() {
 				return editor.document.$;
+			}
+			editor.getElement = function() {
+				return editor.element.$;
 			}
 			editor.getBody = function() {
 				return   editor.editable().$ || editor.document.$.body;
@@ -139,6 +155,10 @@
 
 
 
+
+
+
+
 			function setUpContextMenu(editor, path) {
 			var iconpath = path + 'icons/nanospell.png';
 			if (!editor.contextMenu) {
@@ -154,14 +174,14 @@
 						if (suggestion.indexOf(String.fromCharCode(160)) > -1) {
 							return window.open('http://ckeditor-spellcheck.nanospell.com/license?discount=developer_max');
 						}
- 
+
 						    var txt = document.createElement("textarea");
 						    txt.innerHTML = suggestion;
-						    
-						 
+
+
 
 						editor.insertText(txt.value);
-				
+
 
 						element.$.className = "nanospell-typo-disabled"
 					}
@@ -170,7 +190,7 @@
 			var currentTypoText = function() {
 				var anchor = editor.getSelection().getStartElement();
 				var range = editor.createRange();
-				//Fixes FF and IE hilighting of selected word
+				//Fixes FF and IE highlighting of selected word
 				range.selectNodeContents(anchor)
 				range.enlarge();
 				range.optimize();
@@ -178,75 +198,88 @@
 					// end fix
 				return anchor.getText();
 			}
+
 			editor.addMenuGroup('nano', -10 * 3); /*at the top*/
 			editor.addMenuGroup('nanotools', -10 * 3 + 1);
-			editor.contextMenu.addListener(function(element) {
-				if (!element.$ || !element.$.className || element.$.nodeName.toLowerCase() != 'span' || element.$.className !== "nanospell-typo") {
-					return;
-				}
-				var typo = currentTypoText();
-				var retobj = {};
-				var suggestions = getSuggestions(typo);
-				if (!suggestions) {
-					return;
-				}
-				if (suggestions.length == 0) {
-					 
-					editor.addMenuItem('nanopell_nosug', {
-						label: locale.nosuggestions,
-						icon: iconpath,
-						group: 'nano',
-					});
-					retobj["nanopell_nosug"] = CKEDITOR.TRISTATE_DISABLED
-				} else {
-					for (var i = 0; i < suggestions.length; i++) {
-						var word = suggestions[i]
-						if (word.replace(/^\s+|\s+$/g, '').length < 1) {
-							continue;
-						}
-						editor.addMenuItem('nanopell_sug_' + i, generateSuggestionMenuItem(word, !!!i, typo, element));
-						retobj["nanopell_sug_" + i] = CKEDITOR.TRISTATE_OFF
-					}
-				}
-				 
-				editor.addMenuItem('nanopell_ignore', {
-					label: locale.ignore,
-					group: 'nanotools',
-					onClick: function() {
-						ignoreWord(element.$, typo, true);
-					}
-				});
-				 
-				retobj["nanopell_ignore"] = CKEDITOR.TRISTATE_OFF
-					//
-				if (localStorage ) {
-					editor.addMenuItem('nanopell_learn', {
-						label: locale.learn,
-						group: 'nanotools',
-						onClick: function() {
-							addPersonal(typo);
-							ignoreWord(element.$, typo, true);
-						}
-					});
-					retobj["nanopell_learn"] = CKEDITOR.TRISTATE_OFF
-				}
-				return retobj
-			});
+
+			if(!editor.contextMenu.hasNanoListener){
+
+                editor.contextMenu.addListener(function(element) {
+                    if (!element.$ || !element.$.className || element.$.nodeName.toLowerCase() != 'span' || element.$.className !== "nanospell-typo") {
+                        return;
+                    }
+                    var typo = currentTypoText();
+                    var retobj = {};
+                    var suggestions = getSuggestions(typo);
+                    if (!suggestions) {
+                        return;
+                    }
+                    if (suggestions.length == 0) {
+
+                        editor.addMenuItem('nanopell_nosug', {
+                            label: locale.nosuggestions,
+                            icon: iconpath,
+                            group: 'nano',
+                        });
+                        retobj["nanopell_nosug"] = CKEDITOR.TRISTATE_DISABLED
+                    } else {
+                        for (var i = 0; i < suggestions.length; i++) {
+                            var word = suggestions[i]
+                            if (word.replace(/^\s+|\s+$/g, '').length < 1) {
+                                continue;
+                            }
+                            editor.addMenuItem('nanopell_sug_' + i, generateSuggestionMenuItem(word, !!!i, typo, element));
+                            retobj["nanopell_sug_" + i] = CKEDITOR.TRISTATE_OFF
+                        }
+                    }
+
+                    editor.addMenuItem('nanopell_ignore', {
+                        label: locale.ignore,
+                        group: 'nanotools',
+                        onClick: function() {
+                            ignoreWord(element.$, typo, true);
+                        }
+                    });
+
+                    retobj["nanopell_ignore"] = CKEDITOR.TRISTATE_OFF
+                        //
+                    if (localStorage ) {
+                        editor.addMenuItem('nanopell_learn', {
+                            label: locale.learn,
+                            group: 'nanotools',
+                            onClick: function() {
+                                addPersonal(typo);
+                                ignoreWord(element.$, typo, true);
+                            }
+                        });
+                        retobj["nanopell_learn"] = CKEDITOR.TRISTATE_OFF
+                    }
+                    return retobj
+                });
+
+                editor.contextMenu.hasNanoListener = true;
+			}
 		}
 		/* #2 setup layer */
 		/* #3 nanospell util layer */
-	var start = function() {
- 		
 
-		editor.getCommand('nanospell').setState(CKEDITOR.TRISTATE_ON);
-		state = true;
-		appendCustomStyles(settings_path)
-		var words = getWords(editor.getBody(), maxRequest)
-		if (words.length == 0) {
-			render();
-		} else {
-			send(words);
-		}
+
+
+	var start = function() {
+		clearTimeout(sendTimeOut);
+		sendTimeOut = setTimeout(function() {
+			editor.getCommand('nanospell').setState(CKEDITOR.TRISTATE_ON);
+			state = true;
+			appendCustomStyles(settings_path)
+
+			var words = getWords(editor.getBody(),maxRequest);
+
+			if (words.length == 0) {
+				render();
+			} else {
+				send(words);
+			}
+		}, 1000);
 	}
 	var stop = function() {
 		editor.getCommand('nanospell').setState(CKEDITOR.TRISTATE_OFF);
@@ -254,8 +287,16 @@
 		clearAllSpellCheckingSpans(editor.getElement());
 	}
 
+		editor.stopNanospell = function(){
+		    stop();
+		}
+		editor.startNanospell = function(){
+		    start();
+		}
+
 	function checkNow() {
 		if (!selectionCollapsed()) {
+
 			return;
 		}
 		if (state) {
@@ -314,22 +355,22 @@
 		xhr.open('POST', url, true);
 		xhr.onreadystatechange = function() {
 			if ((xhr.readyState == 4 && ((xhr.status >= 200 && xhr.status < 300) || xhr.status == 304 || xhr.status === 0 || xhr.status == 1223))) {
-				
+
 				callback(xhr.responseText);
 				xhr = null;
 			}
 		};
 		xhr.send(data);
 		return true;
-	};
+	}
 
 	function parseRpc(data, words) {
 		try{
 		var json = JSON.parse(data);
 	 }catch(e){
-	
+
 			var msg = ("Nanospell need to be installed correctly before use (server:"+settings.server+").\n\nPlease run nanospell/getstarted.html. ");
-		 
+
 			if(window.location.href.indexOf('nanospell/')<0){
 				console.log(msg)
 			}else{
@@ -338,7 +379,6 @@
 				}
 			}
 	 }
- 
 		var result = json.result
 		for (var i in words) {
 			var word = words[i];
@@ -355,7 +395,7 @@
 	function resolveAjaxHandler() {
 		var svr = settings.server;
 		var url = settings_path;
-		
+
 		url +="../";
 
 		if (typeof(svr) == "undefined") {
@@ -384,10 +424,14 @@
 
 	function render() {
 
+
 		if(window.getSelection && editor.getWin().getSelection().toString()){
 			return;
 		}
-	 
+
+	    if(!state){
+	        return;
+	    }
 
 		putCursor();
 		var IEcaret = getCaretIE()
@@ -406,7 +450,7 @@
 		var finished = false;
 		while (!finished) {
 			finished = true;
-			nodes = base.getElementsByTagName("span")
+			nodes = base.getElementsByTagName("span");
 			var i = nodes.length;
 			while (i--) {
 				node = nodes[i];
@@ -476,7 +520,7 @@
 		var invalidchar = "\\s!\"#$%&()*+,-.â€¦/:;<=>?@[\\]^_{|}`\u200b\u00a7\u00a9\u00ab\u00ae\u00b1\u00b6\u00b7\u00b8\u00bb\u00bc\u00bd\u00be\u00bf\u00d7\u00f7\u00a4\u201d\u201c\u201e\u201f" + String.fromCharCode(160)
 		var validword = "[^" + invalidchar + "'\u2018\u2019][^" + invalidchar + "]+[^" + invalidchar + "'\u2018\u2019]";
 		var result = new RegExp("(" + email + ")|(" + protocol + ")|(" + domain + ")|(&#\d+;)|(" + validword + ")", singleton ? "" : "g");
-		
+
 
 
 		if (singleton) {
@@ -506,6 +550,7 @@
 		}
 		for (var i = 0; i < matches.length; i++) {
 			var word = cleanQuotes(matches[i]);
+			word = word.replace(/[\x00-\x1F\x7F]/g, '');
 			if (!uniqueWords[word] && validWordToken(word) && (typeof(spellcache[word]) === 'undefined')) {
 				words.push(word);
 				uniqueWords[word] = true;
@@ -552,9 +597,6 @@
 	function cleanQuotes(word) {
 		return word.replace(/[\u2018\u2019]/g, "'");
 	}
-	var spellcache = [];
-	var suggestionscache = [];
-	var ignorecache = [];
 
 	function validWordToken(word) {
 		if (!word) {
@@ -746,7 +788,12 @@
 		var newNodes = [textNode];
 		while ((match = regex.exec(currentNode.data)) != null) {
 
-			var matchtext = match[0].replace("&#8203;",'');;
+			/**
+			 * References
+			 * https://www.w3resource.com/javascript-exercises/javascript-string-exercise-32.php
+			 * http://www.asciitable.com/
+			 */
+			var matchtext = match[0].replace(/[^\x20-\x7E]/g, '');
 			if (!validWordToken(matchtext)) {
 				continue;
 			}
@@ -773,16 +820,20 @@
 
 	function selectionCollapsed() {
 		if (!editor.getSelection()) {
+
 			return true;
 		}
+
 		return editor.getSelection().getSelectedText().length == 0;
+
 	}
 	var spell_ticker = null;
 
 	function triggerSpelling(immediate) {
-		//only reckeck when the user pauses typing
-		clearTimeout(spell_ticker);
-		if (selectionCollapsed) {
+		//only recheck when the user pauses typing
+
+		if (selectionCollapsed()) {
+		    clearTimeout(spell_ticker);
 			spell_ticker = setTimeout(checkNow, immediate ? 50 : spell_delay);
 		}
 	}
@@ -817,9 +868,28 @@
 		node.parentNode.insertBefore(content, node);
 		node.parentNode.removeChild(node);
 	}
+
+
+			if(!editor.nanospell){
+				editor.nanospell = {
+					getLanguage: function(){
+						return lang;
+					},
+					setLanguage: function(langcode){
+						lang = langcode;
+						checkNow();
+					}
+				};
+
+
+
+			}
+
+
+
 		}
-		
-		
+
+
 	});
-	
+
 })();
